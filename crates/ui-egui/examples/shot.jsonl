@@ -1,0 +1,14 @@
+{"width": 1000, "height": 640}
+{"tab": "Map"}
+{"steps": 10}
+{"shot": "map.png"}
+{"cmd": "map.basemap", "params": {"type": "ocean"}}
+{"steps": 5}
+{"shot": "map-ocean.png"}
+{"dark": true}
+{"steps": 5}
+{"shot": "map-dark.png"}
+{"dark": false}
+{"tab": "Analysis"}
+{"steps": 10}
+{"shot": "analysis.png"}
