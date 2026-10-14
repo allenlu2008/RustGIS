@@ -30,7 +30,7 @@
 
 **关键认知**：工具（tool）与命令（command）的宿主模型不同——
 
-- **命令**：可主动发 host 请求（`host.layers`、`host.features`、`host.view`、`host.notify`、`host.addLayer`、`map.addTiles`、以及**任意已注册命令 id**，受权限约束）；每次调用有约 2×10⁹ 指令的燃料预算。
+- **命令**：可主动发 host 请求（`host.layers`、`host.features`、`host.view`、`host.notify`、`host.dialog`、`host.addLayer`、`map.addTiles`、以及**任意已注册命令 id**，受权限约束）；每次调用有约 2×10⁹ 指令的燃料预算。
 - **工具**：宿主把图层参数的要素（GeoJSON FeatureCollection，有选择集则只给选中）随请求的 `layers` 字段一次性给它；工具**只返回结果**（新图层/独立表/选择集/消息），**不发 host 请求**；燃料预算约 4×10¹⁰。结果由宿主像内置工具一样加入项目（一步撤销、失败回滚）。
 
 每次调用都是**全新实例**：模块调用间不保留状态，也不必释放内存。

@@ -184,6 +184,47 @@ fn plugins_install_from_a_file_after_a_prompt() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A plugin's `host.dialog` window shows its table, and Close takes it away.
+#[test]
+fn a_plugin_window_shows_its_table() {
+    let _turn = PLUGINS.lock().unwrap_or_else(|e| e.into_inner());
+    use rustgis_ui_egui::rustgis_engine::plugins as rp;
+    let pkg =
+        rp::testing::zip_of(&[("plugin.json", rp::testing::manifest("ui-dialog", &[]).as_bytes()), ("plugin.wasm", &rp::testing::wasm())]);
+    rp::load(rp::Package::from_zip(&pkg).unwrap(), "test").unwrap();
+    let mut h = harness();
+    for _ in 0..4 {
+        h.step();
+    }
+    // Its `f` command forwards the request to the host, so this is the button's own path.
+    h.state_mut()
+        .run(
+            "plugin:ui-dialog/f",
+            json!({"op": "host.dialog", "params": {
+                "title": "Layer information",
+                "columns": ["Name", "Geometry", "Path"],
+                "rows": [["Cities", "Point", "C:\\data\\cities.shp"], ["Rivers", "Polyline", ""]],
+                "note": "2 layers",
+            }}),
+        )
+        .unwrap();
+    h.step();
+    h.step();
+    // The title carries the plugin's name, so the window can't pass for RustGIS's own.
+    let title = "Test ui-dialog: Layer information";
+    h.get_by_label(title);
+    for cell in ["Name", "Geometry", "Path", "Cities", "C:\\data\\cities.shp", "Rivers", "2 layers"] {
+        assert!(h.query_by_label(cell).is_some(), "'{cell}' should show in the window");
+    }
+    // The button's own label is the interface's text, in whatever language the test runs in.
+    let close = Box::leak(rustgis_ui_egui::i18n::t("Close").to_string().into_boxed_str());
+    h.query_all_by_label(close).next().expect("a Close button").click_accesskit();
+    h.step();
+    h.step();
+    assert!(h.query_by_label(title).is_none(), "Close takes the window away");
+    rp::unload("ui-dialog");
+}
+
 #[test]
 fn plugins_can_have_a_tab_of_their_own() {
     let _turn = PLUGINS.lock().unwrap_or_else(|e| e.into_inner());

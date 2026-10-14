@@ -1,0 +1,29 @@
+[package]
+name = "xiashen-format-converter"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+license = "MIT"
+description = "虾神格式转换：选择本机 Shapefile（.shp）转换为 GeoJSON 的 RustGIS 插件"
+
+# 独立于 RustGIS 根 workspace（不参与源工程的构建，避免污染）。
+[workspace]
+
+[lib]
+# 产物是 wasm32-unknown-unknown 下的 xiashen_format_converter.wasm。
+crate-type = ["cdylib"]
+
+[dependencies]
+serde_json = "1"
+
+# 端到端测试：用宿主自己的 rustgis-plugins 加载并运行本插件（dev-only，不影响 wasm 产物）。
+[dev-dependencies]
+rustgis-plugins = { path = "../../crates/plugins" }
+serde_json = "1"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

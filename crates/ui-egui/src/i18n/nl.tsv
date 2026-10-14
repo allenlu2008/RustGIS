@@ -220,6 +220,8 @@ Camera Effect	Camera-effect
 Can't read this folder	Kan deze map niet lezen
 Cancel	Annuleren
 Cancel Caching	Cachen annuleren
+Execute	Uitvoeren
+{label} is required	{label} is verplicht
 Capture To Clipboard	Naar klembord kopiëren
 CARGO_PKG_VERSION	CARGO_PKG_VERSION
 Cartography	Cartografie

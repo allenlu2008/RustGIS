@@ -220,6 +220,8 @@ Camera Effect	Эффект камеры
 Can't read this folder	Не удаётся прочитать эту папку
 Cancel	Отмена
 Cancel Caching	Отменить кэширование
+Execute	Выполнить
+{label} is required	{label} обязателен
 Capture To Clipboard	Снимок в буфер обмена
 CARGO_PKG_VERSION	CARGO_PKG_VERSION
 Cartography	Картография

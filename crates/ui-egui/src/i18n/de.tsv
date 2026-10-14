@@ -220,6 +220,8 @@ Camera Effect	Kameraeffekt
 Can't read this folder	Dieser Ordner kann nicht gelesen werden
 Cancel	Abbrechen
 Cancel Caching	Caching abbrechen
+Execute	Ausführen
+{label} is required	{label} ist erforderlich
 Capture To Clipboard	In Zwischenablage aufnehmen
 CARGO_PKG_VERSION	CARGO_PKG_VERSION
 Cartography	Kartografie

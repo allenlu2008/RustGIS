@@ -220,6 +220,8 @@ Camera Effect	카메라 효과
 Can't read this folder	이 폴더를 읽을 수 없습니다
 Cancel	취소
 Cancel Caching	캐시 생성 취소
+Execute	실행
+{label} is required	{label}은(는) 필수입니다
 Capture To Clipboard	클립보드로 캡처
 CARGO_PKG_VERSION	CARGO_PKG_VERSION
 Cartography	지도 제작

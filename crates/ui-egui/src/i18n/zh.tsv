@@ -220,6 +220,8 @@ Camera Effect	相机效果
 Can't read this folder	无法读取此文件夹
 Cancel	取消
 Cancel Caching	取消缓存
+Execute	执行
+{label} is required	{label} 为必填项
 Capture To Clipboard	捕获到剪贴板
 CARGO_PKG_VERSION	CARGO_PKG_VERSION
 Cartography	制图

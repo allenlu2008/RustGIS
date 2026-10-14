@@ -220,6 +220,8 @@ Camera Effect	Hiệu ứng máy ảnh
 Can't read this folder	Không thể đọc thư mục này
 Cancel	Hủy
 Cancel Caching	Hủy lưu bộ đệm
+Execute	Chạy
+{label} is required	{label} là bắt buộc
 Capture To Clipboard	Chụp vào bảng nhớ tạm
 CARGO_PKG_VERSION	CARGO_PKG_VERSION
 Cartography	Bản đồ học

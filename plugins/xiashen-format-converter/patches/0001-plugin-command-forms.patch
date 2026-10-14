@@ -1,0 +1,516 @@
+diff --git a/crates/plugins/src/lib.rs b/crates/plugins/src/lib.rs
+index 15b55ca..221a2dd 100644
+--- a/crates/plugins/src/lib.rs
++++ b/crates/plugins/src/lib.rs
+@@ -28,7 +28,7 @@ use std::sync::{Arc, RwLock};
+ 
+ use serde_json::{Value, json};
+ 
+-pub use manifest::{CommandDecl, Entry, GroupDecl, ItemDecl, Manifest, MenuDecl, Permission, TabDecl, ToolDecl};
++pub use manifest::{CommandDecl, Entry, FormFieldDecl, GroupDecl, ItemDecl, Manifest, MenuDecl, Permission, TabDecl, ToolDecl};
+ pub use package::Package;
+ pub use runtime::{Host, NoHost};
+ 
+diff --git a/crates/plugins/src/manifest.rs b/crates/plugins/src/manifest.rs
+index 93753ad..12cb3f3 100644
+--- a/crates/plugins/src/manifest.rs
++++ b/crates/plugins/src/manifest.rs
+@@ -88,6 +88,28 @@ pub struct CommandDecl {
+     /// Parameter description for scripts and agents, like a built-in command's.
+     #[serde(default = "no_params")]
+     pub params: String,
++    /// Fields a dialog collects before the command runs (the host shows a file field's
++    /// Browse button and an Execute button). Empty: the command runs when clicked.
++    #[serde(default)]
++    pub form: Vec<FormFieldDecl>,
++}
++
++/// A field of a command's form: what its dialog collects before running the command.
++#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct FormFieldDecl {
++    pub name: String,
++    pub label: String,
++    /// `path` (a file field with a Browse button), `text` or `number`.
++    pub kind: String,
++    /// Whether the dialog needs a value before running the command.
++    #[serde(default)]
++    pub required: bool,
++    #[serde(default)]
++    pub help: String,
++    /// For `path`: the extensions the file picker offers (`["shp"]`).
++    #[serde(default)]
++    pub accept: Vec<String>,
+ }
+ 
+ fn no_params() -> String {
+@@ -160,6 +182,9 @@ pub enum Entry<'a> {
+ pub const PARAM_KINDS: &[&str] =
+     &["layer", "vectorLayer", "polygonLayer", "pointLayer", "field", "numericField", "number", "text", "choice", "bool"];
+ 
++/// The field kinds a command's form may use.
++pub const FORM_KINDS: &[&str] = &["path", "text", "number"];
++
+ /// Whether a parameter kind names a layer (its features are passed to the tool).
+ pub fn is_layer_kind(kind: &str) -> bool {
+     matches!(kind, "layer" | "vectorLayer" | "polygonLayer" | "pointLayer")
+@@ -340,6 +365,28 @@ impl Manifest {
+             check_text("command help", &c.help, false)?;
+             check_text("command params", &c.params, false)?;
+             check_text("command icon", &c.icon, false)?;
++            if c.form.len() > MAX_PARAMS {
++                return Err(format!("plugin.json: command '{}' has more than {MAX_PARAMS} form fields", c.id));
++            }
++            let mut form_names = std::collections::HashSet::new();
++            for f in &c.form {
++                if !valid_id(&f.name, true) || !form_names.insert(f.name.as_str()) {
++                    return Err(format!("plugin.json: command '{}': form field '{}' is invalid or repeated", c.id, f.name));
++                }
++                check_text("form field label", &f.label, true)?;
++                check_text("form field help", &f.help, false)?;
++                if !FORM_KINDS.contains(&f.kind.as_str()) {
++                    return Err(format!("plugin.json: command '{}': unknown form field kind '{}'", c.id, f.kind));
++                }
++                if f.accept.len() > MAX_CHOICES {
++                    return Err(format!("plugin.json: command '{}': '{}' has too many file extensions", c.id, f.name));
++                }
++                for a in &f.accept {
++                    if a.is_empty() || a.len() > 16 || !a.chars().all(|c| c.is_ascii_alphanumeric()) {
++                        return Err(format!("plugin.json: command '{}': '{}' has an invalid file extension '{a}'", c.id, f.name));
++                    }
++                }
++            }
+         }
+         for t in &self.tools {
+             if !valid_id(&t.id, false) || !seen.insert(("t", t.id.as_str())) {
+diff --git a/crates/plugins/src/tests.rs b/crates/plugins/src/tests.rs
+index ea6f01e..85b9e72 100644
+--- a/crates/plugins/src/tests.rs
++++ b/crates/plugins/src/tests.rs
+@@ -279,6 +279,45 @@ fn plugin_tabs_are_checked() {
+     }
+ }
+ 
++#[test]
++fn plugin_forms_are_checked() {
++    // A command's form: a file field (the dialog shows a Browse button filtered to the
++    // extensions), a text field and a number field.
++    let with_form = |form: Value| {
++        let mut m: Value = serde_json::from_str(&testing::manifest("formed", &["edit", "files"])).unwrap();
++        m["commands"][0]["form"] = form;
++        Manifest::parse(&m.to_string())
++    };
++    let ok = with_form(json!([
++        {"name": "path", "label": "Shapefile", "kind": "path", "required": true, "accept": ["shp"], "help": "Pick a .shp"},
++        {"name": "note", "label": "Note", "kind": "text"},
++        {"name": "count", "label": "Count", "kind": "number"}
++    ]))
++    .unwrap();
++    assert_eq!(ok.commands[0].form.len(), 3);
++    assert_eq!(ok.commands[0].form[0].kind, "path");
++    assert!(ok.commands[0].form[0].required);
++    assert_eq!(ok.commands[0].form[0].accept, vec!["shp"]);
++    for (bad, why) in [
++        (json!([{"name": "path", "label": "File", "kind": "file"}]), "unknown form field kind"),
++        (json!([{"name": "path", "label": "File", "kind": "path"}]), ""),
++        (json!([{"name": "path", "label": "", "kind": "path"}]), "form field label"),
++        (json!([{"name": "Path", "label": "File", "kind": "path"}]), "invalid or repeated"),
++        (json!([{"name": "a", "label": "A", "kind": "path"}, {"name": "a", "label": "B", "kind": "text"}]), "invalid or repeated"),
++        (json!([{"name": "a", "label": "A", "kind": "path", "accept": ["sh p"]}]), "invalid file extension"),
++    ] {
++        if why.is_empty() {
++            with_form(bad.clone()).unwrap();
++            continue;
++        }
++        let e = with_form(bad.clone()).unwrap_err();
++        assert!(e.contains(why), "{bad}: {e}");
++    }
++    // A command without a form runs as soon as its button is clicked.
++    let plain: Value = serde_json::from_str(&testing::manifest("plain", &[])).unwrap();
++    assert!(Manifest::parse(&plain.to_string()).unwrap().commands[0].form.is_empty());
++}
++
+ #[test]
+ fn large_registries_are_read_quickly() {
+     // 20,000 plugins (and a duplicate of each, which is dropped) parse in a fraction of a second;
+diff --git a/crates/ui-egui/src/dialogs.rs b/crates/ui-egui/src/dialogs.rs
+index 79d615f..50eeba4 100644
+--- a/crates/ui-egui/src/dialogs.rs
++++ b/crates/ui-egui/src/dialogs.rs
+@@ -20,6 +20,32 @@ pub struct Dialogs {
+     pub flag: bool,
+     pub error: Option<String>,
+     pub info: Option<String>,
++    /// A plugin command's form dialog (its `command.form`), while it is open.
++    pub form: Option<PluginForm>,
++}
++
++/// A plugin command's form: the dialog shown before the command runs.
++#[derive(Clone)]
++pub struct PluginForm {
++    /// `plugin:<plugin>/<command>`.
++    pub id: String,
++    /// The dialog's title: the command's label in the interface language.
++    pub title: String,
++    pub fields: Vec<PluginFormField>,
++}
++
++/// One field of a plugin command's form.
++#[derive(Clone)]
++pub struct PluginFormField {
++    pub name: String,
++    pub label: String,
++    /// `path`, `text` or `number`.
++    pub kind: String,
++    pub required: bool,
++    pub help: String,
++    /// For `path`: the extensions the file picker offers.
++    pub accept: Vec<String>,
++    pub value: String,
+ }
+ 
+ impl Dialogs {
+@@ -86,6 +112,9 @@ impl Dialogs {
+ }
+ 
+ pub fn show(app: &mut RustGisApp, ctx: &egui::Context) {
++    if app.dialogs.form.is_some() {
++        show_form(app, ctx);
++    }
+     let Some(which) = app.dialogs.open else { return };
+     let title = match which {
+         "selectByAttributes" => "Select By Attributes",
+@@ -346,6 +375,67 @@ fn add_tiles(app: &mut RustGisApp, ui: &mut egui::Ui) -> bool {
+     })
+ }
+ 
++/// A plugin command's form: file (or text) fields with a Browse button, and an Execute
++/// button that runs `plugin:…` with what was filled in. The submission carries `_form`,
++/// which tells [`RustGisApp::run`] to run the command instead of opening this dialog again.
++fn show_form(app: &mut RustGisApp, ctx: &egui::Context) {
++    let Some(form) = app.dialogs.form.clone() else { return };
++    let mut open = true;
++    let mut close = false;
++    egui::Window::new(form.title.clone())
++        .id(egui::Id::new("plugin_form_dialog"))
++        .open(&mut open)
++        .collapsible(false)
++        .resizable(false)
++        .anchor(Align2::CENTER_CENTER, vec2(0.0, -40.0))
++        .show(ctx, |ui| {
++            ui.set_width(520.0);
++            ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
++            let mut fields = form.fields.clone();
++            for f in &mut fields {
++                let label = ui.label(egui::RichText::new(f.label.clone()).size(12.0));
++                if !f.help.is_empty() {
++                    label.on_hover_text(f.help.clone());
++                }
++                if f.kind == "path" {
++                    ui.horizontal(|ui| {
++                        ui.add(egui::TextEdit::singleline(&mut f.value).desired_width(f32::INFINITY).hint_text(tl!("file path")));
++                        let exts: Vec<&str> = f.accept.iter().map(String::as_str).collect();
++                        if ui.button(tl!("Browse")).clicked() && !exts.is_empty() && let Some(p) = pick_open(&exts, &f.label) {
++                            f.value = p;
++                        }
++                    });
++                } else {
++                    ui.add(egui::TextEdit::singleline(&mut f.value).desired_width(f32::INFINITY));
++                }
++                ui.add_space(4.0);
++            }
++            close = buttons(app, ui, "Execute", |app| {
++                for f in &fields {
++                    if f.required && f.value.trim().is_empty() {
++                        return Err(crate::i18n::fmt("{label} is required", &[("label", &f.label)]));
++                    }
++                }
++                let mut params = serde_json::Map::new();
++                for f in &fields {
++                    let v = if f.kind == "number" {
++                        f.value.trim().parse::<f64>().map(Value::from).unwrap_or_else(|_| Value::String(f.value.clone()))
++                    } else {
++                        Value::String(f.value.clone())
++                    };
++                    params.insert(f.name.clone(), v);
++                }
++                params.insert("_form".into(), Value::Bool(true));
++                let id = form.id.clone();
++                app.dialogs.form = None;
++                app.run(&id, Value::Object(params)).map(|_| ())
++            });
++        });
++    if !open || close {
++        app.dialogs.form = None;
++    }
++}
++
+ /// OK/Cancel row; returns true when the dialog should close.
+ fn buttons(app: &mut RustGisApp, ui: &mut egui::Ui, ok: &str, f: impl FnOnce(&mut RustGisApp) -> Result<(), String>) -> bool {
+     let mut close = false;
+diff --git a/crates/ui-egui/src/i18n/az.tsv b/crates/ui-egui/src/i18n/az.tsv
+index bb301f7..91037b1 100644
+--- a/crates/ui-egui/src/i18n/az.tsv
++++ b/crates/ui-egui/src/i18n/az.tsv
+@@ -220,6 +220,8 @@ Camera Effect	Kamera effekti
+ Can't read this folder	Bu qovluğu oxumaq mümkün deyil
+ Cancel	Ləğv et
+ Cancel Caching	Keşləməni ləğv et
++Execute	İcra et
++{label} is required	{label} tələb olunur
+ Capture To Clipboard	Mübadilə buferinə çək
+ CARGO_PKG_VERSION	CARGO_PKG_VERSION
+ Cartography	Kartoqrafiya
+diff --git a/crates/ui-egui/src/i18n/de.tsv b/crates/ui-egui/src/i18n/de.tsv
+index 338300a..ae49093 100644
+--- a/crates/ui-egui/src/i18n/de.tsv
++++ b/crates/ui-egui/src/i18n/de.tsv
+@@ -220,6 +220,8 @@ Camera Effect	Kameraeffekt
+ Can't read this folder	Dieser Ordner kann nicht gelesen werden
+ Cancel	Abbrechen
+ Cancel Caching	Caching abbrechen
++Execute	Ausführen
++{label} is required	{label} ist erforderlich
+ Capture To Clipboard	In Zwischenablage aufnehmen
+ CARGO_PKG_VERSION	CARGO_PKG_VERSION
+ Cartography	Kartografie
+diff --git a/crates/ui-egui/src/i18n/es.tsv b/crates/ui-egui/src/i18n/es.tsv
+index 90a39e7..7899268 100644
+--- a/crates/ui-egui/src/i18n/es.tsv
++++ b/crates/ui-egui/src/i18n/es.tsv
+@@ -220,6 +220,8 @@ Camera Effect	Efecto de cámara
+ Can't read this folder	No se puede leer esta carpeta
+ Cancel	Cancelar
+ Cancel Caching	Cancelar almacenamiento en caché
++Execute	Ejecutar
++{label} is required	{label} es obligatorio
+ Capture To Clipboard	Capturar al portapapeles
+ CARGO_PKG_VERSION	CARGO_PKG_VERSION
+ Cartography	Cartografía
+diff --git a/crates/ui-egui/src/i18n/fr.tsv b/crates/ui-egui/src/i18n/fr.tsv
+index 3bfb5cb..8fecc54 100644
+--- a/crates/ui-egui/src/i18n/fr.tsv
++++ b/crates/ui-egui/src/i18n/fr.tsv
+@@ -220,6 +220,8 @@ Camera Effect	Effet de caméra
+ Can't read this folder	Impossible de lire ce dossier
+ Cancel	Annuler
+ Cancel Caching	Annuler la mise en cache
++Execute	Exécuter
++{label} is required	{label} est requis
+ Capture To Clipboard	Capturer dans le presse-papiers
+ CARGO_PKG_VERSION	CARGO_PKG_VERSION
+ Cartography	Cartographie
+diff --git a/crates/ui-egui/src/i18n/id.tsv b/crates/ui-egui/src/i18n/id.tsv
+index 0af0c0c..b9dccd2 100644
+--- a/crates/ui-egui/src/i18n/id.tsv
++++ b/crates/ui-egui/src/i18n/id.tsv
+@@ -220,6 +220,8 @@ Camera Effect	Efek Kamera
+ Can't read this folder	Tidak dapat membaca folder ini
+ Cancel	Batal
+ Cancel Caching	Batalkan Caching
++Execute	Jalankan
++{label} is required	{label} wajib diisi
+ Capture To Clipboard	Tangkap ke Papan Klip
+ CARGO_PKG_VERSION	CARGO_PKG_VERSION
+ Cartography	Kartografi
+diff --git a/crates/ui-egui/src/i18n/it.tsv b/crates/ui-egui/src/i18n/it.tsv
+index e3ce882..3537d65 100644
+--- a/crates/ui-egui/src/i18n/it.tsv
++++ b/crates/ui-egui/src/i18n/it.tsv
+@@ -220,6 +220,8 @@ Camera Effect	Effetto fotocamera
+ Can't read this folder	Impossibile leggere questa cartella
+ Cancel	Annulla
+ Cancel Caching	Annulla caching
++Execute	Esegui
++{label} is required	{label} è obbligatorio
+ Capture To Clipboard	Cattura negli appunti
+ CARGO_PKG_VERSION	CARGO_PKG_VERSION
+ Cartography	Cartografia
+diff --git a/crates/ui-egui/src/i18n/ja.tsv b/crates/ui-egui/src/i18n/ja.tsv
+index 51ae990..ef4bc72 100644
+--- a/crates/ui-egui/src/i18n/ja.tsv
++++ b/crates/ui-egui/src/i18n/ja.tsv
+@@ -220,6 +220,8 @@ Camera Effect	カメラ効果
+ Can't read this folder	このフォルダーを読み取れません
+ Cancel	キャンセル
+ Cancel Caching	キャッシュの取り消し
++Execute	実行
++{label} is required	{label} は必須です
+ Capture To Clipboard	クリップボードにキャプチャ
+ CARGO_PKG_VERSION	CARGO_PKG_VERSION
+ Cartography	カートグラフィ
+diff --git a/crates/ui-egui/src/i18n/ko.tsv b/crates/ui-egui/src/i18n/ko.tsv
+index 91f1ec8..247ec18 100644
+--- a/crates/ui-egui/src/i18n/ko.tsv
++++ b/crates/ui-egui/src/i18n/ko.tsv
+@@ -220,6 +220,8 @@ Camera Effect	카메라 효과
+ Can't read this folder	이 폴더를 읽을 수 없습니다
+ Cancel	취소
+ Cancel Caching	캐시 생성 취소
++Execute	실행
++{label} is required	{label}은(는) 필수입니다
+ Capture To Clipboard	클립보드로 캡처
+ CARGO_PKG_VERSION	CARGO_PKG_VERSION
+ Cartography	지도 제작
+diff --git a/crates/ui-egui/src/i18n/nl.tsv b/crates/ui-egui/src/i18n/nl.tsv
+index c96ef1a..e270876 100644
+--- a/crates/ui-egui/src/i18n/nl.tsv
++++ b/crates/ui-egui/src/i18n/nl.tsv
+@@ -220,6 +220,8 @@ Camera Effect	Camera-effect
+ Can't read this folder	Kan deze map niet lezen
+ Cancel	Annuleren
+ Cancel Caching	Cachen annuleren
++Execute	Uitvoeren
++{label} is required	{label} is verplicht
+ Capture To Clipboard	Naar klembord kopiëren
+ CARGO_PKG_VERSION	CARGO_PKG_VERSION
+ Cartography	Cartografie
+diff --git a/crates/ui-egui/src/i18n/pt.tsv b/crates/ui-egui/src/i18n/pt.tsv
+index 01d4087..f20a0c5 100644
+--- a/crates/ui-egui/src/i18n/pt.tsv
++++ b/crates/ui-egui/src/i18n/pt.tsv
+@@ -220,6 +220,8 @@ Camera Effect	Efeito de câmera
+ Can't read this folder	Não é possível ler esta pasta
+ Cancel	Cancelar
+ Cancel Caching	Cancelar cache
++Execute	Executar
++{label} is required	{label} é obrigatório
+ Capture To Clipboard	Capturar para a área de transferência
+ CARGO_PKG_VERSION	CARGO_PKG_VERSION
+ Cartography	Cartografia
+diff --git a/crates/ui-egui/src/i18n/ru.tsv b/crates/ui-egui/src/i18n/ru.tsv
+index 0fe4c1a..88b7b79 100644
+--- a/crates/ui-egui/src/i18n/ru.tsv
++++ b/crates/ui-egui/src/i18n/ru.tsv
+@@ -220,6 +220,8 @@ Camera Effect	Эффект камеры
+ Can't read this folder	Не удаётся прочитать эту папку
+ Cancel	Отмена
+ Cancel Caching	Отменить кэширование
++Execute	Выполнить
++{label} is required	{label} обязателен
+ Capture To Clipboard	Снимок в буфер обмена
+ CARGO_PKG_VERSION	CARGO_PKG_VERSION
+ Cartography	Картография
+diff --git a/crates/ui-egui/src/i18n/tr.tsv b/crates/ui-egui/src/i18n/tr.tsv
+index 0cbb5cc..ec0739e 100644
+--- a/crates/ui-egui/src/i18n/tr.tsv
++++ b/crates/ui-egui/src/i18n/tr.tsv
+@@ -220,6 +220,8 @@ Camera Effect	Kamera Efekti
+ Can't read this folder	Bu klasör okunamıyor
+ Cancel	İptal
+ Cancel Caching	Önbelleğe Almayı İptal Et
++Execute	Çalıştır
++{label} is required	{label} gerekli
+ Capture To Clipboard	Panoya Yakala
+ CARGO_PKG_VERSION	CARGO_PKG_VERSION
+ Cartography	Kartografya
+diff --git a/crates/ui-egui/src/i18n/vi.tsv b/crates/ui-egui/src/i18n/vi.tsv
+index 807c83a..bc890eb 100644
+--- a/crates/ui-egui/src/i18n/vi.tsv
++++ b/crates/ui-egui/src/i18n/vi.tsv
+@@ -220,6 +220,8 @@ Camera Effect	Hiệu ứng máy ảnh
+ Can't read this folder	Không thể đọc thư mục này
+ Cancel	Hủy
+ Cancel Caching	Hủy lưu bộ đệm
++Execute	Chạy
++{label} is required	{label} là bắt buộc
+ Capture To Clipboard	Chụp vào bảng nhớ tạm
+ CARGO_PKG_VERSION	CARGO_PKG_VERSION
+ Cartography	Bản đồ học
+diff --git a/crates/ui-egui/src/i18n/zh.tsv b/crates/ui-egui/src/i18n/zh.tsv
+index cd294ad..75ac257 100644
+--- a/crates/ui-egui/src/i18n/zh.tsv
++++ b/crates/ui-egui/src/i18n/zh.tsv
+@@ -220,6 +220,8 @@ Camera Effect	相机效果
+ Can't read this folder	无法读取此文件夹
+ Cancel	取消
+ Cancel Caching	取消缓存
++Execute	执行
++{label} is required	{label} 为必填项
+ Capture To Clipboard	捕获到剪贴板
+ CARGO_PKG_VERSION	CARGO_PKG_VERSION
+ Cartography	制图
+diff --git a/crates/ui-egui/src/lib.rs b/crates/ui-egui/src/lib.rs
+index 2dd60f8..d9c18fb 100644
+--- a/crates/ui-egui/src/lib.rs
++++ b/crates/ui-egui/src/lib.rs
+@@ -664,7 +664,39 @@ impl RustGisApp {
+         if !matches!(id, "ui.menu" | "ui.ribbon" | "ui.language" | "ui.worldview") {
+             self.ui.ribbon_peek = false;
+         }
+-        let r = if id.starts_with("ui.") { self.run_ui(id, &params) } else { self.session.run(id, &params) };
++        let r = if id.starts_with("ui.") {
++            self.run_ui(id, &params)
++        } else if id.starts_with(rustgis_engine::plugins::PREFIX)
++            && params.get("_form").is_none()
++            && let Some(cmd) = rustgis_engine::plugins::command(id)
++            && !cmd.decl.form.is_empty()
++        {
++            // A plugin command with a form: show its dialog instead of running it. The
++            // dialog submits the fields back with `_form`, which reaches the branch below.
++            let lang = self.lang().code();
++            let title = cmd.plugin.manifest.translate(lang, &cmd.decl.label).to_string();
++            let fields = cmd
++                .decl
++                .form
++                .iter()
++                .map(|f| crate::dialogs::PluginFormField {
++                    name: f.name.clone(),
++                    label: cmd.plugin.manifest.translate(lang, &f.label).to_string(),
++                    kind: f.kind.clone(),
++                    required: f.required,
++                    help: cmd.plugin.manifest.translate(lang, &f.help).to_string(),
++                    accept: f.accept.clone(),
++                    value: String::new(),
++                })
++                .collect();
++            self.dialogs.open = None;
++            self.dialogs.error = None;
++            self.dialogs.info = None;
++            self.dialogs.form = Some(crate::dialogs::PluginForm { id: id.to_string(), title, fields });
++            Ok(Value::Null)
++        } else {
++            self.session.run(id, &params)
++        };
+         if let Err(e) = &r {
+             log::info!("{id}: {e}");
+         }
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 695d12c..6f1ed79 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -206,6 +206,34 @@ can hide it like any other. Declare it in `plugin.json`:
+ [Map Explorer](https://github.com/opengeos/rustgis-plugins/tree/main/plugins/map-explorer) is
+ an example.
+ 
++### A dialog of its own
++
++A command can collect its parameters in a dialog before it runs: the host shows the fields, a
++**Browse** button for file fields (the system file picker, filtered by `accept`) and an
++**Execute** button that runs the command with what was filled in. Declare it on the command:
++
++```json
++"commands": [
++  {
++    "id": "convert",
++    "label": "格式转换",
++    "icon": "export",
++    "form": [
++      { "name": "path", "label": "Shapefile 文件", "kind": "path", "required": true,
++        "accept": ["shp"], "help": "选择本机上的 .shp 文件。" }
++    ]
++  }
++]
++```
++
++- `kind`s: `path` (a file field with a Browse button), `text` and `number`. An empty `form`
++  (the default) runs the command as soon as its button is clicked.
++- The values arrive as the command's `params`, plus `"_form": true` (which is how the host
++  tells a submission apart from the click that opened the dialog). A `required` field left
++  empty keeps the dialog open.
++- The dialog's title is the command's label; titles and field labels are plugin text and go
++  through `i18n` like the rest.
++
+ ### What a plugin can ask for
+ 
+ Inside a request, `host::call(op, params)` sends one of these to RustGIS:

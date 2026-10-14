@@ -1,0 +1,59 @@
+{
+  "id": "xiashen-format-converter",
+  "name": "虾神自定义工具",
+  "version": "0.1.0",
+  "description": "虾神用于自定义工具功能的测试。",
+  "author": "XiaShen",
+  "license": "MIT",
+  "entry": "plugin.wasm",
+  "abi": 1,
+  "minRustgisVersion": "0.1.0",
+  "permissions": ["edit", "files"],
+  "commands": [
+    {
+      "id": "convert",
+      "label": "格式转换",
+      "help": "选择一个本机的 Shapefile（.shp）文件，转换为 GeoJSON 保存到同目录。",
+      "icon": "export",
+      "params": "{\"path\": \"*.shp 输入文件\", \"…\": \"返回 {input, output, features}\"}",
+      "form": [
+        {
+          "name": "path",
+          "label": "Shapefile 文件",
+          "kind": "path",
+          "required": true,
+          "accept": ["shp"],
+          "help": "选择本机上的 .shp 文件（同目录需要有 .dbf、.shx 等配套文件）。"
+        }
+      ]
+    },
+    {
+      "id": "layer-info",
+      "label": "图层信息",
+      "help": "列出内容列表中每个图层的名称、几何类型、路径、要素数等信息。",
+      "icon": "table",
+      "params": "{}"
+    },
+    {
+      "id": "clear-layers",
+      "label": "移除所有图层",
+      "help": "把内容列表里的所有图层从当前地图工程中移除（整个命令是一步撤销）。",
+      "icon": "delete",
+      "params": "{}"
+    }
+  ],
+  "tab": {
+    "label": "虾神自定义工具",
+    "groups": [
+      {
+        "label": "格式转换",
+        "items": ["convert"]
+      },
+      {
+        "label": "图层",
+        "items": ["layer-info", "clear-layers"]
+      }
+    ]
+  },
+  "i18n": {}
+}

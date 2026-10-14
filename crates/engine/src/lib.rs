@@ -192,6 +192,20 @@ pub struct Notice {
     pub error: bool,
 }
 
+/// A window a plugin asked the interface to open (`host.dialog`): a title, columns and rows of
+/// text, and an optional note beneath them. Like [`Notice`], it waits for the interface to show
+/// it; the engine only bounds what a plugin may put in it (see `cmd::plugins`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct PluginDialog {
+    /// The plugin's title with its own name in front, so a window can't pass for RustGIS's.
+    pub title: String,
+    /// Column headings, or empty for a plain list of lines.
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<String>>,
+    /// A line under the table, if any.
+    pub note: Option<String>,
+}
+
 const UNDO_LIMIT: usize = 40;
 
 pub struct Session {
@@ -209,6 +223,9 @@ pub struct Session {
     pub notices: Vec<Notice>,
     /// Notices given in this session, including ones no longer kept (see [`Session::notices_since`]).
     notices_given: u64,
+    /// The window a plugin opened with `host.dialog`, for the interface to show (it is taken
+    /// when shown).
+    pub pending_dialog: Option<PluginDialog>,
     /// Layer whose attribute table is open.
     pub table_layer: Option<u32>,
     /// Edits per layer id since the project was last saved (Edit › Status). A failed command's
@@ -322,6 +339,7 @@ impl Session {
             view_size: (1200.0, 720.0),
             notices: Vec::new(),
             notices_given: 0,
+            pending_dialog: None,
             table_layer: None,
             clipboard: None,
             keep_tool: false,

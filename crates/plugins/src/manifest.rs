@@ -88,6 +88,28 @@ pub struct CommandDecl {
     /// Parameter description for scripts and agents, like a built-in command's.
     #[serde(default = "no_params")]
     pub params: String,
+    /// Fields a dialog collects before the command runs (the host shows a file field's
+    /// Browse button and an Execute button). Empty: the command runs when clicked.
+    #[serde(default)]
+    pub form: Vec<FormFieldDecl>,
+}
+
+/// A field of a command's form: what its dialog collects before running the command.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FormFieldDecl {
+    pub name: String,
+    pub label: String,
+    /// `path` (a file field with a Browse button), `text` or `number`.
+    pub kind: String,
+    /// Whether the dialog needs a value before running the command.
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub help: String,
+    /// For `path`: the extensions the file picker offers (`["shp"]`).
+    #[serde(default)]
+    pub accept: Vec<String>,
 }
 
 fn no_params() -> String {
@@ -159,6 +181,9 @@ pub enum Entry<'a> {
 /// The parameter kinds a tool may use.
 pub const PARAM_KINDS: &[&str] =
     &["layer", "vectorLayer", "polygonLayer", "pointLayer", "field", "numericField", "number", "text", "choice", "bool"];
+
+/// The field kinds a command's form may use.
+pub const FORM_KINDS: &[&str] = &["path", "text", "number"];
 
 /// Whether a parameter kind names a layer (its features are passed to the tool).
 pub fn is_layer_kind(kind: &str) -> bool {
@@ -340,6 +365,28 @@ impl Manifest {
             check_text("command help", &c.help, false)?;
             check_text("command params", &c.params, false)?;
             check_text("command icon", &c.icon, false)?;
+            if c.form.len() > MAX_PARAMS {
+                return Err(format!("plugin.json: command '{}' has more than {MAX_PARAMS} form fields", c.id));
+            }
+            let mut form_names = std::collections::HashSet::new();
+            for f in &c.form {
+                if !valid_id(&f.name, true) || !form_names.insert(f.name.as_str()) {
+                    return Err(format!("plugin.json: command '{}': form field '{}' is invalid or repeated", c.id, f.name));
+                }
+                check_text("form field label", &f.label, true)?;
+                check_text("form field help", &f.help, false)?;
+                if !FORM_KINDS.contains(&f.kind.as_str()) {
+                    return Err(format!("plugin.json: command '{}': unknown form field kind '{}'", c.id, f.kind));
+                }
+                if f.accept.len() > MAX_CHOICES {
+                    return Err(format!("plugin.json: command '{}': '{}' has too many file extensions", c.id, f.name));
+                }
+                for a in &f.accept {
+                    if a.is_empty() || a.len() > 16 || !a.chars().all(|c| c.is_ascii_alphanumeric()) {
+                        return Err(format!("plugin.json: command '{}': '{}' has an invalid file extension '{a}'", c.id, f.name));
+                    }
+                }
+            }
         }
         for t in &self.tools {
             if !valid_id(&t.id, false) || !seen.insert(("t", t.id.as_str())) {

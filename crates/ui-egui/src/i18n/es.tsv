@@ -220,6 +220,8 @@ Camera Effect	Efecto de cámara
 Can't read this folder	No se puede leer esta carpeta
 Cancel	Cancelar
 Cancel Caching	Cancelar almacenamiento en caché
+Execute	Ejecutar
+{label} is required	{label} es obligatorio
 Capture To Clipboard	Capturar al portapapeles
 CARGO_PKG_VERSION	CARGO_PKG_VERSION
 Cartography	Cartografía

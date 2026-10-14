@@ -220,6 +220,8 @@ Camera Effect	Kamera effekti
 Can't read this folder	Bu qovluğu oxumaq mümkün deyil
 Cancel	Ləğv et
 Cancel Caching	Keşləməni ləğv et
+Execute	İcra et
+{label} is required	{label} tələb olunur
 Capture To Clipboard	Mübadilə buferinə çək
 CARGO_PKG_VERSION	CARGO_PKG_VERSION
 Cartography	Kartoqrafiya

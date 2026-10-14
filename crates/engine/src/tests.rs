@@ -1607,6 +1607,88 @@ fn plugin_commands_run_like_commands() {
     rustgis_plugins::unload("eng-view");
 }
 
+/// `host.dialog` hands the interface a window: the plugin's text (bounded, with the plugin's
+/// name in the title) and, with `host.layers`, where each layer was read from.
+#[test]
+fn plugin_dialogs_are_bounded_and_attributed() {
+    let mut s = world();
+    plugin("eng-dialog", &[]);
+    // Nothing to show is an error, not an empty window.
+    let e = forward(&mut s, "eng-dialog", "host.dialog", json!({})).unwrap_err();
+    assert!(e.contains("nothing to show"), "{e}");
+    assert!(s.pending_dialog.is_none());
+    // A table of text, with the plugin's name in front of the title it chose.
+    forward(
+        &mut s,
+        "eng-dialog",
+        "host.dialog",
+        json!({"title": "Layer information", "columns": ["Name", "Geometry", "Path"],
+            "rows": [["Cities", "Point", "C:\\data\\cities.shp"], ["Rivers", "Polyline"]], "note": "2 layers"}),
+    )
+    .unwrap();
+    let d = s.pending_dialog.take().expect("the window to hand to the interface");
+    assert_eq!(d.title, "Test eng-dialog: Layer information");
+    assert_eq!(d.columns, ["Name", "Geometry", "Path"]);
+    // Rows are padded to the columns, so the table lines up.
+    assert_eq!(
+        d.rows,
+        vec![
+            vec!["Cities".to_string(), "Point".to_string(), "C:\\data\\cities.shp".to_string()],
+            vec!["Rivers".to_string(), "Polyline".to_string(), String::new()],
+        ]
+    );
+    assert_eq!(d.note.as_deref(), Some("2 layers"));
+    // Junk is cut to size rather than refused (and never panics).
+    forward(
+        &mut s,
+        "eng-dialog",
+        "host.dialog",
+        json!({"title": "t".repeat(4_000), "columns": ["a", 7, {"k": 1}],
+            "rows": [["u".repeat(9_000), "b", "c", "d"], "junk", {"nope": true}], "note": 42}),
+    )
+    .unwrap();
+    let d = s.pending_dialog.take().unwrap();
+    assert_eq!(d.title.chars().count(), "Test eng-dialog: ".len() + 120, "the title is cut to 120 characters");
+    assert_eq!(d.columns, vec!["a", "7", r#"{"k":1}"#], "cells are text whatever they were");
+    assert_eq!(d.rows[0].len(), 3, "a row is cut to the columns");
+    assert_eq!(d.rows[0][0].chars().count(), 400, "a cell is cut");
+    assert_eq!(d.rows[1], vec![String::new(); 3], "a row that isn't a list of cells");
+    assert_eq!(d.rows[2], vec![String::new(); 3], "a row that isn't a list of cells");
+    assert_eq!(d.note, None, "a number is no note");
+    // Without headings a row is a line of text, cut to the line's own limit.
+    let wide: Vec<String> = (0..10).map(|_| "y".repeat(400)).collect();
+    forward(
+        &mut s,
+        "eng-dialog",
+        "host.dialog",
+        json!({"title": "Lines", "rows": [["one", "two"], [], ["x".repeat(9_000)], wide, "plain"]}),
+    )
+    .unwrap();
+    let d = s.pending_dialog.take().unwrap();
+    assert_eq!(d.title, "Test eng-dialog: Lines");
+    assert!(d.columns.is_empty());
+    assert_eq!(d.rows.len(), 3, "empty lines and rows that aren't lists of cells are dropped");
+    assert_eq!(d.rows[0], vec!["one  two"]);
+    assert_eq!(d.rows[1][0].chars().count(), 400, "a cell is cut before the line is joined");
+    assert_eq!(d.rows[2][0].chars().count(), 1_000, "a line is cut too");
+    // More rows than the window holds are dropped, not kept.
+    let many: Vec<Value> = (0..2_000).map(|i| json!([i])).collect();
+    forward(&mut s, "eng-dialog", "host.dialog", json!({"title": "Many", "rows": many})).unwrap();
+    assert_eq!(s.pending_dialog.as_ref().map(|d| d.rows.len()), Some(500));
+    s.pending_dialog = None;
+    // `host.layers` says where each layer was read from: a path, or null in the project.
+    s.run("layer.addDataText", &json!({"fileName": "demo.geojson",
+        "text": r#"{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"n":1},"geometry":{"type":"Point","coordinates":[1,2]}}]}"#}))
+    .unwrap();
+    let layers = forward(&mut s, "eng-dialog", "host.layers", json!({})).unwrap();
+    let layers = layers.as_array().unwrap();
+    let demo = layers.iter().find(|l| l["path"] == "demo.geojson").expect("the layer read from text has its path");
+    assert_eq!(demo["geometry"], "Point");
+    let cities = layers.iter().find(|l| l["name"] == "Cities").expect("the sample's Cities");
+    assert!(cities["path"].is_null(), "a layer of the project itself has no path");
+    rustgis_plugins::unload("eng-dialog");
+}
+
 #[test]
 fn plugin_edits_are_one_undo_step() {
     let mut s = world();

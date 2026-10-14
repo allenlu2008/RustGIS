@@ -40,9 +40,14 @@ pub const PAGES: &[Page] = pages![
     "plugins.md",
     "i18n.md",
     "architecture.md",
+    "technical-architecture.md",
     "contributing.md",
     "sponsor.md",
     "privacy.md",
+    // In docs/ but not on the site: development notes rather than user documentation.
+    "writing-a-plugin.md",
+    "ui-egui-modules.md",
+    "framework-extraction-feasibility.md",
 ];
 
 /// The longest page or section handed back (characters).

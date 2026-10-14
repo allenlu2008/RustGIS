@@ -664,7 +664,39 @@ impl RustGisApp {
         if !matches!(id, "ui.menu" | "ui.ribbon" | "ui.language" | "ui.worldview") {
             self.ui.ribbon_peek = false;
         }
-        let r = if id.starts_with("ui.") { self.run_ui(id, &params) } else { self.session.run(id, &params) };
+        let r = if id.starts_with("ui.") {
+            self.run_ui(id, &params)
+        } else if id.starts_with(rustgis_engine::plugins::PREFIX)
+            && params.get("_form").is_none()
+            && let Some(cmd) = rustgis_engine::plugins::command(id)
+            && !cmd.decl.form.is_empty()
+        {
+            // A plugin command with a form: show its dialog instead of running it. The
+            // dialog submits the fields back with `_form`, which reaches the branch below.
+            let lang = self.lang().code();
+            let title = cmd.plugin.manifest.translate(lang, &cmd.decl.label).to_string();
+            let fields = cmd
+                .decl
+                .form
+                .iter()
+                .map(|f| crate::dialogs::PluginFormField {
+                    name: f.name.clone(),
+                    label: cmd.plugin.manifest.translate(lang, &f.label).to_string(),
+                    kind: f.kind.clone(),
+                    required: f.required,
+                    help: cmd.plugin.manifest.translate(lang, &f.help).to_string(),
+                    accept: f.accept.clone(),
+                    value: String::new(),
+                })
+                .collect();
+            self.dialogs.open = None;
+            self.dialogs.error = None;
+            self.dialogs.info = None;
+            self.dialogs.form = Some(crate::dialogs::PluginForm { id: id.to_string(), title, fields });
+            Ok(Value::Null)
+        } else {
+            self.session.run(id, &params)
+        };
         if let Err(e) = &r {
             log::info!("{id}: {e}");
         }

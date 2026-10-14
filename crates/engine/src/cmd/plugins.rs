@@ -11,7 +11,7 @@ use rustgis_plugins::{Host, Permission, Plugin};
 use serde_json::{Value, json};
 
 use super::{b, ps, uint};
-use crate::{CmdResult, CommandSpec as C, Session};
+use crate::{CmdResult, CommandSpec as C, PluginDialog, Session};
 
 pub fn commands() -> Vec<C> {
     vec![
@@ -208,6 +208,30 @@ const PLACE_KEYS: &[&str] = &["path", "folder", "dir", "file", "url", "uri", "so
 /// The command running an SQL query through DuckDB, which can read any file and web address.
 pub const SQL: &str = "layer.addSql";
 
+/// What a plugin may put in a window (`host.dialog`): text, and not much of it. Anything longer
+/// is cut rather than refused, so the window opens with what fits.
+const DIALOG_TITLE: usize = 120;
+const DIALOG_HEAD: usize = 80;
+const DIALOG_COLUMNS: usize = 12;
+const DIALOG_ROWS: usize = 500;
+const DIALOG_CELL: usize = 400;
+const DIALOG_LINE: usize = 1_000;
+const DIALOG_NOTE: usize = 400;
+
+/// One line of a window's text: at most `n` characters, with line breaks turned into spaces
+/// (every row of a window is a single line).
+fn cut(text: String, n: usize) -> String {
+    text.chars().map(|c| if c == '\r' || c == '\n' || c == '\t' { ' ' } else { c }).take(n).collect()
+}
+
+/// A cell's text: a string as it is, anything else written out as JSON.
+fn cell(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    }
+}
+
 /// What a command reaches beyond the project when run with some parameters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reach {
@@ -305,6 +329,8 @@ impl Bridge<'_> {
                 .map(|l| {
                     json!({
                         "id": l.id, "name": l.name, "raster": l.is_raster(), "visible": l.visible,
+                        // Where the layer was read from: a file's path, or null in the project.
+                        "path": l.dataset.source.clone().or_else(|| l.raster.as_ref().and_then(|r| r.path.clone())),
                         "geometry": format!("{:?}", l.dataset.geometry_type), "features": l.dataset.features.len(),
                         "selected": l.selection.len(), "active": Some(l.id) == active,
                         "fields": l.dataset.fields.iter().map(|f| json!({"name": f.name, "type": format!("{:?}", f.ty)})).collect::<Vec<_>>(),
@@ -351,6 +377,45 @@ impl Bridge<'_> {
         let (ds, report) = rustgis_data::io::read_geojson(&gj.to_string(), &name).map_err(|e| e.to_string())?;
         let id = super::layer::add_dataset(self.s, ds);
         Ok(json!({"layer": id, "skipped": report.skipped}))
+    }
+
+    /// A window (`host.dialog`): the plugin's text, bounded by the limits above, with the
+    /// plugin's name in front of its title so the window can't pass for RustGIS's own. It waits
+    /// in [`Session::pending_dialog`] for the interface, which is read-only like `host.notify`.
+    fn dialog(&mut self, p: &Value) -> CmdResult {
+        let title = p.get("title").and_then(Value::as_str).unwrap_or_default();
+        let columns: Vec<String> = match p.get("columns").and_then(Value::as_array) {
+            Some(a) => a.iter().take(DIALOG_COLUMNS).map(|c| cut(cell(c), DIALOG_HEAD)).collect(),
+            None => Vec::new(),
+        };
+        let n = columns.len();
+        let mut rows: Vec<Vec<String>> = Vec::new();
+        if let Some(a) = p.get("rows").and_then(Value::as_array) {
+            for r in a.iter().take(DIALOG_ROWS) {
+                let mut cells: Vec<String> =
+                    r.as_array().map(|c| c.iter().map(|v| cut(cell(v), DIALOG_CELL)).collect()).unwrap_or_default();
+                if n == 0 {
+                    // No headings: a row is a line of text rather than a table's cells.
+                    let line = cut(cells.join("  "), DIALOG_LINE);
+                    if !line.is_empty() {
+                        rows.push(vec![line]);
+                    }
+                } else {
+                    // Every row has the columns' width, so the table lines up.
+                    cells.truncate(n);
+                    cells.resize(n, String::new());
+                    rows.push(cells);
+                }
+            }
+        }
+        let note = p.get("note").and_then(Value::as_str).map(|s| cut(s.to_string(), DIALOG_NOTE)).filter(|s| !s.trim().is_empty());
+        if title.trim().is_empty() && columns.is_empty() && rows.is_empty() && note.is_none() {
+            return Err("host.dialog: the window has nothing to show".into());
+        }
+        let name = &self.plugin.manifest.name;
+        let title = if title.trim().is_empty() { name.clone() } else { format!("{name}: {}", cut(title.to_string(), DIALOG_TITLE)) };
+        self.s.pending_dialog = Some(PluginDialog { title, columns, rows, note });
+        Ok(Value::Null)
     }
 
     fn command(&mut self, id: &str, params: &Value) -> CmdResult {
@@ -419,6 +484,7 @@ impl Host for Bridge<'_> {
                 Ok(Value::Null)
             }
             "host.addLayer" => self.add_layer(params),
+            "host.dialog" => self.dialog(params),
             _ if op.starts_with("host.") => Err(format!("unknown request '{op}'")),
             _ => self.command(op, params),
         }

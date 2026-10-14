@@ -280,6 +280,45 @@ fn plugin_tabs_are_checked() {
 }
 
 #[test]
+fn plugin_forms_are_checked() {
+    // A command's form: a file field (the dialog shows a Browse button filtered to the
+    // extensions), a text field and a number field.
+    let with_form = |form: Value| {
+        let mut m: Value = serde_json::from_str(&testing::manifest("formed", &["edit", "files"])).unwrap();
+        m["commands"][0]["form"] = form;
+        Manifest::parse(&m.to_string())
+    };
+    let ok = with_form(json!([
+        {"name": "path", "label": "Shapefile", "kind": "path", "required": true, "accept": ["shp"], "help": "Pick a .shp"},
+        {"name": "note", "label": "Note", "kind": "text"},
+        {"name": "count", "label": "Count", "kind": "number"}
+    ]))
+    .unwrap();
+    assert_eq!(ok.commands[0].form.len(), 3);
+    assert_eq!(ok.commands[0].form[0].kind, "path");
+    assert!(ok.commands[0].form[0].required);
+    assert_eq!(ok.commands[0].form[0].accept, vec!["shp"]);
+    for (bad, why) in [
+        (json!([{"name": "path", "label": "File", "kind": "file"}]), "unknown form field kind"),
+        (json!([{"name": "path", "label": "File", "kind": "path"}]), ""),
+        (json!([{"name": "path", "label": "", "kind": "path"}]), "form field label"),
+        (json!([{"name": "Path", "label": "File", "kind": "path"}]), "invalid or repeated"),
+        (json!([{"name": "a", "label": "A", "kind": "path"}, {"name": "a", "label": "B", "kind": "text"}]), "invalid or repeated"),
+        (json!([{"name": "a", "label": "A", "kind": "path", "accept": ["sh p"]}]), "invalid file extension"),
+    ] {
+        if why.is_empty() {
+            with_form(bad.clone()).unwrap();
+            continue;
+        }
+        let e = with_form(bad.clone()).unwrap_err();
+        assert!(e.contains(why), "{bad}: {e}");
+    }
+    // A command without a form runs as soon as its button is clicked.
+    let plain: Value = serde_json::from_str(&testing::manifest("plain", &[])).unwrap();
+    assert!(Manifest::parse(&plain.to_string()).unwrap().commands[0].form.is_empty());
+}
+
+#[test]
 fn large_registries_are_read_quickly() {
     // 20,000 plugins (and a duplicate of each, which is dropped) parse in a fraction of a second;
     // the bound is generous so a busy CI machine doesn't fail it, while a quadratic scan

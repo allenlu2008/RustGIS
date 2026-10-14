@@ -49,7 +49,9 @@ Plugins run in a sandbox: an interpreter (`wasmi`) with no access to files, the 
 clock or anything else outside the module. A plugin reaches RustGIS only through the requests
 described below, and RustGIS checks each one:
 
-- Every plugin can **read the map**: its layers, their features and the view.
+- Every plugin can **read the map**: its layers, their features and the view. It can also show
+  what it found: a line in the status bar (`host.notify`) or a read-only window whose title the
+  host prefixes with the plugin's name (`host.dialog`), bounded in size.
 - With the **`edit`** permission, it can change the project. It can run commands that edit it and
   add layers. A plugin command that changes the project is one undo step, and it is rolled back
   if the command fails.
@@ -206,6 +208,55 @@ can hide it like any other. Declare it in `plugin.json`:
 [Map Explorer](https://github.com/opengeos/rustgis-plugins/tree/main/plugins/map-explorer) is
 an example.
 
+### A dialog of its own
+
+A command can collect its parameters in a dialog before it runs: the host shows the fields, a
+**Browse** button for file fields (the system file picker, filtered by `accept`) and an
+**Execute** button that runs the command with what was filled in. Declare it on the command:
+
+```json
+"commands": [
+  {
+    "id": "convert",
+    "label": "格式转换",
+    "icon": "export",
+    "form": [
+      { "name": "path", "label": "Shapefile 文件", "kind": "path", "required": true,
+        "accept": ["shp"], "help": "选择本机上的 .shp 文件。" }
+    ]
+  }
+]
+```
+
+- `kind`s: `path` (a file field with a Browse button), `text` and `number`. An empty `form`
+  (the default) runs the command as soon as its button is clicked.
+- The values arrive as the command's `params`, plus `"_form": true` (which is how the host
+  tells a submission apart from the click that opened the dialog). A `required` field left
+  empty keeps the dialog open.
+- The dialog's title is the command's label; titles and field labels are plugin text and go
+  through `i18n` like the rest.
+
+The other direction works too: a command can open its own read-only window with `host.dialog`
+— to show what it found, not to ask for anything:
+
+```json
+{ "op": "host.dialog",
+  "params": { "title": "图层信息",
+              "columns": ["名称", "几何类型", "路径"],
+              "rows": [["Cities", "Point", "C:\\data\\cities.shp"]],
+              "note": "共 1 个图层" } }
+```
+
+- `columns` makes the rows a table (each row is padded or cut to the columns' width); without
+  it each row is one line of text. `title` and `note` are optional; an entirely empty window
+  is an error.
+- The window is read-only and scrolls, so a plugin may send many rows; the host bounds the
+  title, headings, rows and cells (longer text is cut, never rejected) and replaces newlines
+  with spaces.
+- The host puts the plugin's name in front of the title (`虾神格式转换: 图层信息`), so the
+  window can't pass for one RustGIS opened itself. Closing it is the user's — the plugin
+  gets no callback.
+
 ### What a plugin can ask for
 
 Inside a request, `host::call(op, params)` sends one of these to RustGIS:
@@ -213,10 +264,11 @@ Inside a request, `host::call(op, params)` sends one of these to RustGIS:
 | Request | Answer |
 |---|---|
 | `host.info` | RustGIS's version, the ABI, the plugin's id and permissions |
-| `host.layers` | `[{id, name, raster, visible, geometry, features, selected, active, fields: [{name, type}]}]` |
+| `host.layers` | `[{id, name, raster, visible, path, geometry, features, selected, active, fields: [{name, type}]}]` |
 | `host.features` `{layer, selected?, limit?}` | the layer's features as GeoJSON; each feature has its `row` |
 | `host.view` | `{center: [lon, lat], scale, projection}` |
 | `host.notify` `{text, error?}` | shows a message in the status bar |
+| `host.dialog` `{title?, columns?, rows?, note?}` | opens a read-only window with the text as a table; see [A dialog of its own](#a-dialog-of-its-own) |
 | `host.addLayer` `{name, geojson}` | adds a layer (`edit`) |
 | `map.addTiles` `{url, kind?, name?, attribution?, maxZoom?, overlay?, replace?}` | adds a web tile layer (`edit` and `network`) |
 | any command id (`layer.zoomTo`, `select.byAttributes`, `layer.symbology`…) | what the command returns, within the plugin's permissions |

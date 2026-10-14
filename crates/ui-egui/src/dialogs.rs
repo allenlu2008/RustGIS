@@ -1,8 +1,8 @@
-//! Dialogs (Select By Attributes, Go To XY, bookmarks, fields, definition query, rename) and
-//! native file pickers.
+//! Dialogs (Select By Attributes, Go To XY, bookmarks, fields, definition query, rename), the
+//! windows and forms a plugin opens, and native file pickers.
 
 use egui::{Align2, vec2};
-use rustgis_engine::Session;
+use rustgis_engine::{PluginDialog, Session};
 use serde_json::{Value, json};
 
 use crate::RustGisApp;
@@ -20,6 +20,34 @@ pub struct Dialogs {
     pub flag: bool,
     pub error: Option<String>,
     pub info: Option<String>,
+    /// A plugin command's form dialog (its `command.form`), while it is open.
+    pub form: Option<PluginForm>,
+    /// The window a plugin opened with `host.dialog`, while it is open.
+    pub plugin: Option<PluginDialog>,
+}
+
+/// A plugin command's form: the dialog shown before the command runs.
+#[derive(Clone)]
+pub struct PluginForm {
+    /// `plugin:<plugin>/<command>`.
+    pub id: String,
+    /// The dialog's title: the command's label in the interface language.
+    pub title: String,
+    pub fields: Vec<PluginFormField>,
+}
+
+/// One field of a plugin command's form.
+#[derive(Clone)]
+pub struct PluginFormField {
+    pub name: String,
+    pub label: String,
+    /// `path`, `text` or `number`.
+    pub kind: String,
+    pub required: bool,
+    pub help: String,
+    /// For `path`: the extensions the file picker offers.
+    pub accept: Vec<String>,
+    pub value: String,
 }
 
 impl Dialogs {
@@ -86,6 +114,16 @@ impl Dialogs {
 }
 
 pub fn show(app: &mut RustGisApp, ctx: &egui::Context) {
+    // A plugin asked for a window while its command ran (`host.dialog`).
+    if let Some(d) = app.session.pending_dialog.take() {
+        app.dialogs.plugin = Some(d);
+    }
+    if app.dialogs.plugin.is_some() {
+        show_plugin(app, ctx);
+    }
+    if app.dialogs.form.is_some() {
+        show_form(app, ctx);
+    }
     let Some(which) = app.dialogs.open else { return };
     let title = match which {
         "selectByAttributes" => "Select By Attributes",
@@ -344,6 +382,125 @@ fn add_tiles(app: &mut RustGisApp, ui: &mut egui::Ui) -> bool {
         }
         app.run("map.addTiles", p).map(|_| ())
     })
+}
+
+/// The window a plugin opened with `host.dialog`: its columns and rows of text, a note beneath
+/// them and a Close button. The title already carries the plugin's name (the host put it there),
+/// so the window can't pass for one RustGIS opened itself.
+fn show_plugin(app: &mut RustGisApp, ctx: &egui::Context) {
+    let Some(d) = app.dialogs.plugin.clone() else { return };
+    let t = Tokens::get(ctx);
+    let columns = d.columns.len();
+    let mut open = true;
+    let mut close = false;
+    // 打开时居中，但不用 anchor（anchor 会把窗口钉死）：pivot + default_pos 让标题栏可以拖动。
+    egui::Window::new(d.title.clone())
+        .id(egui::Id::new("plugin_dialog"))
+        .open(&mut open)
+        .collapsible(false)
+        .resizable(true)
+        .default_width(620.0)
+        .pivot(Align2::CENTER_CENTER)
+        .default_pos(ctx.content_rect().center() + vec2(0.0, -40.0))
+        .show(ctx, |ui| {
+            // The rows scroll in a bounded window: a plugin may send hundreds of them.
+            egui::ScrollArea::both().id_salt("plugin_dialog_rows").max_height(420.0).auto_shrink([false, false]).show(ui, |ui| {
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                egui::Grid::new("plugin_dialog_table").num_columns(columns.max(1)).striped(true).spacing(vec2(18.0, 4.0)).show(ui, |ui| {
+                    for head in &d.columns {
+                        ui.label(egui::RichText::new(head).font(semibold(11.5)).color(t.text_dim));
+                    }
+                    if columns > 0 {
+                        ui.end_row();
+                    }
+                    for row in &d.rows {
+                        for cell in row {
+                            ui.label(egui::RichText::new(cell).size(11.5));
+                        }
+                        ui.end_row();
+                    }
+                });
+            });
+            if let Some(note) = &d.note {
+                ui.add_space(4.0);
+                ui.label(egui::RichText::new(note).size(11.5).color(t.text_dim));
+            }
+            ui.add_space(4.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                if crate::widgets::dialog_button(ui, tl!("Close"), Some(t.accent), vec2(84.0, 28.0)).clicked() {
+                    close = true;
+                }
+            });
+        });
+    if !open || close {
+        app.dialogs.plugin = None;
+    }
+}
+
+/// A plugin command's form: file (or text) fields with a Browse button, and an Execute
+/// button that runs `plugin:…` with what was filled in. The submission carries `_form`,
+/// which tells [`RustGisApp::run`] to run the command instead of opening this dialog again.
+fn show_form(app: &mut RustGisApp, ctx: &egui::Context) {
+    let Some(form) = app.dialogs.form.clone() else { return };
+    let mut open = true;
+    let mut close = false;
+    // 同 show_plugin：pivot + default_pos 居中且可拖动（anchor 会禁止拖动）。
+    egui::Window::new(form.title.clone())
+        .id(egui::Id::new("plugin_form_dialog"))
+        .open(&mut open)
+        .collapsible(false)
+        .resizable(false)
+        .pivot(Align2::CENTER_CENTER)
+        .default_pos(ctx.content_rect().center() + vec2(0.0, -40.0))
+        .show(ctx, |ui| {
+            ui.set_width(520.0);
+            ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
+            let mut fields = form.fields.clone();
+            for f in &mut fields {
+                let label = ui.label(egui::RichText::new(f.label.clone()).size(12.0));
+                if !f.help.is_empty() {
+                    label.on_hover_text(f.help.clone());
+                }
+                if f.kind == "path" {
+                    ui.horizontal(|ui| {
+                        ui.add(egui::TextEdit::singleline(&mut f.value).desired_width(f32::INFINITY).hint_text(tl!("file path")));
+                        let exts: Vec<&str> = f.accept.iter().map(String::as_str).collect();
+                        if ui.button(tl!("Browse")).clicked()
+                            && !exts.is_empty()
+                            && let Some(p) = pick_open(&exts, &f.label)
+                        {
+                            f.value = p;
+                        }
+                    });
+                } else {
+                    ui.add(egui::TextEdit::singleline(&mut f.value).desired_width(f32::INFINITY));
+                }
+                ui.add_space(4.0);
+            }
+            close = buttons(app, ui, "Execute", |app| {
+                for f in &fields {
+                    if f.required && f.value.trim().is_empty() {
+                        return Err(crate::i18n::fmt("{label} is required", &[("label", &f.label)]));
+                    }
+                }
+                let mut params = serde_json::Map::new();
+                for f in &fields {
+                    let v = if f.kind == "number" {
+                        f.value.trim().parse::<f64>().map(Value::from).unwrap_or_else(|_| Value::String(f.value.clone()))
+                    } else {
+                        Value::String(f.value.clone())
+                    };
+                    params.insert(f.name.clone(), v);
+                }
+                params.insert("_form".into(), Value::Bool(true));
+                let id = form.id.clone();
+                app.dialogs.form = None;
+                app.run(&id, Value::Object(params)).map(|_| ())
+            });
+        });
+    if !open || close {
+        app.dialogs.form = None;
+    }
 }
 
 /// OK/Cancel row; returns true when the dialog should close.
